@@ -1,0 +1,620 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=0.85in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\setlength{\headheight}{14pt}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!50!black,
+    urlcolor=blue!50!black
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{The City of Numeria}
+\rhead{}
+\cfoot{\thepage}
+
+\titleformat{\section}{\Large\bfseries\color{blue!45!black}}{}{0pt}{}
+\titleformat{\subsection}{\large\bfseries\color{black}}{}{0pt}{}
+\titleformat{\subsubsection}{\bfseries\color{black}}{}{0pt}{}
+
+\setlist[itemize]{topsep=3pt,itemsep=2pt,leftmargin=1.2cm}
+\setlist[enumerate]{topsep=3pt,itemsep=3pt,leftmargin=1.2cm}
+
+\newcommand{\mission}[2]{%
+    \section*{Mission #1: #2}
+    \addcontentsline{toc}{section}{Mission #1: #2}
+}
+
+\newcommand{\briefing}[1]{%
+    \vspace{2mm}
+    \noindent\fcolorbox{blue!40!black}{blue!5}{%
+    \begin{minipage}{0.965\linewidth}
+    #1
+    \end{minipage}}
+    \vspace{2mm}
+}
+
+\newcommand{\questionblock}[1]{%
+    \vspace{2mm}
+    \noindent\fcolorbox{black!45}{black!3}{%
+    \begin{minipage}{0.965\linewidth}
+    \textbf{Questions.} #1
+    \end{minipage}}
+    \vspace{2mm}
+}
+
+\newcommand{\deliverable}[1]{%
+    \vspace{1mm}
+    \noindent\textbf{Mission output.} #1
+    \vspace{1mm}
+}
+
+\begin{document}
+
+\begin{center}
+    {\Huge\bfseries The City of Numeria}\\[2mm]
+    {\Large\bfseries Outbreak Simulation Challenge: A numerical adventure}\\[3mm]
+    %{\large A numerical adventure}
+\end{center}
+
+\vspace{3mm}
+
+\briefing{%
+\textbf{Emergency broadcast.} At the beginning of winter,  hospitals in the city of Numeria report the first cases of a new disease, known locally as \emph{Null Fever}, a disease that spreads quietly at first, then accelerates when the city reacts too late. The city is in a difficult situation, as it is isolated from the world during winter and can only access to outside aid after 6 month, the end of winter.
+
+The city council want to know: 
+\[
+\emph{If the hospital system can survive the next 180 days? }
+\]
+\[
+\emph{and what is the best policy to fight this outbreak?}
+\]
+The oracles of the city received a divine revelation regarding how the disease evolve, a set of differential equations! But they can not solve them, so your scientific team has been asked to build and use an adequate simulator. The simulator will not make decisions for you. It will sometimes mislead you if you use it carelessly. Your task is to understand both the epidemic and the numerical method.
+}
+
+\subsection*{The goal}
+
+By the end of the challenge, you should be able to answer questions such as:
+\begin{itemize}
+    \item How large is the outbreak in the baseline scenario?
+    \item When does the infectious population peak?
+    \item Does the hospital load cross the danger line?
+    \item Can a careless simulation create a fake epidemic curve?
+    \item Which numerical method is more reliable: Euler, Heun, or fourth-order Runge--Kutta?
+    \item Which intervention strategy gives the best result under limited resources?
+\end{itemize}
+
+\subsection*{The city dashboard}
+
+During the missions, track the following quantities:
+\begin{align*}
+    \text{total population} \quad &N(t)=S(t)+V(t)+E(t)+I(t)+Q(t)+R(t), \\
+    \text{hospital load} \quad &H(t)=0.04 I(t)+0.10 Q(t), \\
+    \text{hospital capacity} \quad &H_{\max}=600, \\
+    \text{days over capacity} \quad &D_{\mathrm{over}}=\int_0^{180} \mathbf{1}_{H(t)>H_{\max}}\,dt.
+\end{align*}
+
+The number $H(t)$ is not the number of infected people. It is an estimate of the occupied hospital beds: infectious people outside isolation have a smaller hospitalization fraction than isolated infectious people.
+
+You will also track cumulative infections. Define $C(t)$ by
+\[
+    \frac{dC}{dt}=\lambda S+(1-\eta)\lambda V,
+\]
+with
+\[
+    C(0)=E(0)+I(0)+Q(0)+R(0).
+\]
+Thus, $C(t)$ counts all people infected up to time $t$, including the initially infected people.
+
+\newpage
+\section*{The epidemic model}
+\addcontentsline{toc}{section}{The epidemic model}
+
+The city population is divided into six groups:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Symbol & Name & Meaning \\
+\midrule
+$S(t)$ & Susceptible & can become infected \\
+$V(t)$ & Vaccinated & protected, but not perfectly \\
+$E(t)$ & Exposed & infected, not yet infectious \\
+$I(t)$ & Infectious & can infect others \\
+$Q(t)$ & Isolated & infectious, but with reduced contacts \\
+$R(t)$ & Recovered & immune for a while \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The total population is
+\[
+    N=S+V+E+I+Q+R.
+\]
+
+\subsection*{The effective transmission rate}
+
+Contacts are not constant as weekday rhythms, news reports, fear, and caution all change how often people meet. We model this by
+\[
+\beta_{\mathrm{eff}}(t,I)
+=
+\frac{\beta_0\left(1+a\sin\left(\frac{2\pi t}{7}\right)\right)}{1+\kappa I/N}.
+\]
+
+The factor
+\[
+    1+a\sin\left(\frac{2\pi t}{7}\right)
+\]
+adds a weekly rhythm. The denominator
+\[
+    1+\kappa I/N
+\]
+models behavioral feedback: when many people are infectious, citizens reduce contact.
+
+The force of infection is
+\[
+    \lambda(t)=\beta_{\mathrm{eff}}(t,I)\frac{I+\rho Q}{N}.
+\]
+
+The parameter $\rho$ measures how infectious isolated people still are. Since isolated people have fewer contacts, $\rho$ is small.
+
+\subsection*{The equations}
+
+The outbreak evolves according to
+\begin{align*}
+\frac{dS}{dt} &= -\lambda S - \nu S + \omega R, \\
+\frac{dV}{dt} &= \nu S - (1-\eta)\lambda V, \\
+\frac{dE}{dt} &= \lambda S + (1-\eta)\lambda V - \sigma E, \\
+\frac{dI}{dt} &= \sigma E - \gamma I - \delta I, \\
+\frac{dQ}{dt} &= \delta I - \gamma_Q Q, \\
+\frac{dR}{dt} &= \gamma I + \gamma_Q Q - \omega R, \\
+\frac{dC}{dt} &= \lambda S+(1-\eta)\lambda V.
+\end{align*}
+
+The initial condition is
+\[
+\begin{aligned}
+S(0)&=99940, & V(0)&=0, & E(0)&=40, \\
+I(0)&=20, & Q(0)&=0, & R(0)&=0,
+\end{aligned}
+\]
+and
+\[
+    C(0)=60.
+\]
+
+Simulate the city for
+\[
+    0\leq t\leq 180
+\]
+days.
+
+\subsection*{Baseline parameters}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Parameter & Value & Meaning \\
+\midrule
+$N$ & $100000$ & total population \\
+$\beta_0$ & $0.75$ & baseline transmission rate \\
+$a$ & $0.10$ & strength of weekly contact rhythm \\
+$\kappa$ & $25$ & strength of behavioral feedback \\
+$\rho$ & $0.05$ & infectiousness of isolated people \\
+$\eta$ & $0.80$ & vaccine protection \\
+$\nu$ & $0.0005$ & vaccination rate per day \\
+$\omega$ & $1/240$ & immunity waning rate \\
+$\sigma$ & $1/4$ & exposed-to-infectious rate \\
+$\gamma$ & $1/8$ & recovery rate from infectious state \\
+$\delta$ & $0.08$ & isolation rate \\
+$\gamma_Q$ & $1/10$ & recovery rate from isolation \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All rates are measured per day.
+
+\newpage
+\mission{0}{Study the model}
+
+\briefing{Before the city trusts your simulator, it wants to know whether the equations at least obey basic logic. Does the model conserve population? What does each term mean?}
+
+\subsection*{Tasks}
+
+\begin{enumerate}
+    \item Identify the terms that move people out of $S$.
+    \item Identify the terms that move people into $E$.
+    \item Identify the terms that move people from $I$ to $Q$.
+    \item Identify the terms that move people back from $R$ to $S$.
+    \item Add the six equations for $S,V,E,I,Q,R$ and simplify.
+     \item Verify that
+    \[
+        \frac{d}{dt}(S+V+E+I+Q+R)=0.
+    \]
+    What does this say about the city population?
+\end{enumerate}
+
+
+\mission{1}{Build the first forecast}
+
+\briefing{The council asks for a first 180-day forecast. The simplest emergency tool is explicit Euler. It is fast, easy to implement, and dangerous if used blindly.}
+
+Let
+\[
+    Y=(S,V,E,I,Q,R,C).
+\]
+Write the system as
+\[
+    \frac{dY}{dt}=F(t,Y).
+\]
+
+The explicit Euler method is
+\[
+    Y_{n+1}=Y_n+\Delta t\,F(t_n,Y_n),
+\]
+with
+\[
+    t_{n+1}=t_n+\Delta t.
+\]
+
+Use
+\[
+    \Delta t=0.25
+\]
+days.
+
+\subsection*{Tasks}
+
+\begin{enumerate}
+    \item Simulate the model from day $0$ to day $180$.
+    \item Plot $E(t)$, $I(t)$, and $Q(t)$ on one graph.
+    \item Plot $S(t)$, $V(t)$, and $R(t)$ on another graph.
+    \item Plot $H(t)$ and the horizontal danger line $H_{\max}=600$.
+    \item Plot $C(t)$.
+\end{enumerate}
+
+\questionblock{%
+\begin{enumerate}
+    \item On which day does $I(t)$ reach its maximum?
+    \item What is the maximum value of $I(t)$?
+    \item On which day does the hospital load $H(t)$ reach its maximum?
+    \item How many days does the city spend above hospital capacity?
+    \item What is the final value of $C(t)$?
+    \item Does the total population $N(t)$ remain close to $100000$?
+    \item Do all compartments remain nonnegative?
+\end{enumerate}
+}
+
+\mission{2}{The simulation can lie}
+
+\briefing{The first forecast looks official, but the city scientist is suspicious. A numerical method is not the same as the mathematical model. To test the simulator, deliberately stress it.}
+
+Repeat Mission 1 using explicit Euler with
+\[
+    \Delta t=0.5,\quad 1,\quad 2,\quad 4,\quad 8.
+\]
+
+For each run, record:
+\begin{itemize}
+    \item the peak value of $I$;
+    \item the day of the peak;
+    \item the peak hospital load;
+    \item the minimum value among $S,V,E,I,Q,R$;
+    \item the maximum population error
+    \[
+        \max_t |N(t)-100000|;
+    \]
+    \item whether the plot looks physically plausible.
+\end{itemize}
+
+\questionblock{%
+\begin{enumerate}
+    \item At which time step does the simulation first become suspicious?
+    \item At which time step does it clearly become impossible?
+    \item Does population conservation guarantee that the numerical result is correct?
+    \item Can you find a run where $N(t)$ stays almost constant but one compartment becomes negative?
+    
+\end{enumerate}
+}
+
+\mission{3}{The quarantine shock}
+
+\briefing{A new emergency protocol is announced. Exposed people are detected quickly, infectious people are isolated quickly, and isolated people recover quickly. Biologically this seems good. Numerically, it creates very fast time scales.}
+
+Change only these parameters:
+\[
+    \delta=2.5,
+    \qquad
+    \gamma_Q=1.0,
+    \qquad
+    \sigma=1.5.
+\]
+
+Run explicit Euler with
+\[
+    \Delta t=0.05,\quad 0.1,\quad 0.25,\quad 0.5,\quad 1.0.
+\]
+
+\questionblock{%
+\begin{enumerate}
+    \item Which time steps produce reasonable curves?
+    \item Which time steps create oscillations or negative compartments?
+  
+    \item This situation is often called stiffness. Based on your experiments, what does stiffness feel like computationally?
+\end{enumerate}
+}
+
+
+\mission{4}{Three engines for the same city}
+
+\briefing{Euler was quick but fragile. The city offers you two upgraded engines: Heun's method and fourth-order Runge--Kutta. You must decide whether the upgrades are worth it.}
+
+\subsection*{Engine 1: Euler}
+
+\[
+    Y_{n+1}=Y_n+\Delta t F(t_n,Y_n).
+\]
+
+\subsection*{Engine 2: Heun's method}
+
+\begin{align*}
+K_1 &= F(t_n,Y_n),\\
+K_2 &= F(t_n+\Delta t,Y_n+\Delta t K_1),\\
+Y_{n+1} &= Y_n+\frac{\Delta t}{2}(K_1+K_2).
+\end{align*}
+
+\subsection*{Engine 3: Fourth-order Runge--Kutta}
+
+\begin{align*}
+K_1 &= F(t_n,Y_n),\\
+K_2 &= F\left(t_n+\frac{\Delta t}{2},Y_n+\frac{\Delta t}{2}K_1\right),\\
+K_3 &= F\left(t_n+\frac{\Delta t}{2},Y_n+\frac{\Delta t}{2}K_2\right),\\
+K_4 &= F(t_n+\Delta t,Y_n+\Delta t K_3),\\
+Y_{n+1} &= Y_n+\frac{\Delta t}{6}(K_1+2K_2+2K_3+K_4).
+\end{align*}
+
+\subsection*{Comparison task}
+
+Use a very accurate run as a benchmark. For example, use RK4 with
+\[
+    \Delta t_{\mathrm{ref}}=0.01
+\]
+or smaller.
+
+Compare Euler, Heun, and RK4 using
+\[
+    \Delta t=2,\quad 1,\quad 0.5,\quad 0.25.
+\]
+
+At the same output times, compute
+\[
+    e_I(\Delta t)=\max_j |I_{\Delta t}(t_j)-I_{\mathrm{ref}}(t_j)|.
+\]
+
+You may also compute a full-state relative error,
+\[
+    e_Y(\Delta t)=\max_j \frac{\|Y_{\Delta t}(t_j)-Y_{\mathrm{ref}}(t_j)\|_\infty}{100000}.
+\]
+
+\questionblock{%
+\begin{enumerate}
+    \item For the same $\Delta t$, which method is most accurate?
+    \item Which method gives the best peak day and peak size?
+    \item Does RK4 always stay physically meaningful when $\Delta t$ is very large?
+    \item Which is more important in your experiment: higher order, smaller time step, or both?
+\end{enumerate}
+}
+
+\mission{5}{Measure the order of convergence}
+
+\briefing{A method is not only judged by whether it looks good once. A numerical scientist asks a sharper question: when the time step is divided by two, how fast does the error decrease?}
+
+For a method of order $p$, one expects approximately
+\[
+    e(\Delta t)\approx C(\Delta t)^p
+\]
+when $\Delta t$ is small enough and the solution is smooth enough.
+
+Taking logarithms gives
+\[
+    \log e(\Delta t)\approx \log C+p\log(\Delta t).
+\]
+So the slope of a log--log plot estimates $p$.
+
+\subsection*{Tasks}
+
+For each method, use
+\[
+    \Delta t=1,\quad \frac12,\quad \frac14,\quad \frac18.
+\]
+Use a high-accuracy RK4 solution as the benchmark and compute $e_I(\Delta t)$.
+
+Then:
+\begin{enumerate}
+    \item Plot $e_I(\Delta t)$ against $\Delta t$ on a log--log plot.
+    \item Estimate the observed order using
+    \[
+        p_{\mathrm{obs}}(\Delta t)=
+        \frac{\log\left(e_I(\Delta t)/e_I(\Delta t/2)\right)}{\log 2}.
+    \]
+    \item Repeat using the full-state error $e_Y(\Delta t)$ if time allows.
+\end{enumerate}
+
+\questionblock{%
+\begin{enumerate}
+    \item Does Euler behave like a first-order method?
+    \item Does Heun behave like a second-order method?
+    \item Does RK4 behave like a fourth-order method?
+    \item What happens if you include a time step that is too large and unstable?
+    \item What happens if the error becomes extremely small? Can roundoff error disturb the slope?
+\end{enumerate}
+}
+
+
+\mission{6}{Intervention cards}
+
+\briefing{The council has to decide an adequate intervention. Each intervention has a cost. Your team has five action points. Spend them wisely.}
+
+The baseline parameters remain active unless changed by an intervention.
+
+\begin{center}
+\begin{tabular}{p{0.26\linewidth}p{0.18\linewidth}p{0.42\linewidth}}
+\toprule
+Intervention card & Cost & Effect \\
+\midrule
+Public caution campaign & 2 & Increase $\kappa$ by $15$ \\
+Faster vaccination & 3 & Set $\nu=0.0015$ \\
+High-protection booster & 2 & Set $\eta=0.90$ \\
+Rapid testing and isolation & 2 & Set $\delta=0.16$ \\
+Safer isolation centers & 1 & Set $\rho=0.02$ \\
+Festival crowd limits & 3 & For days $0\leq t\leq 30$, replace $\beta_0$ by $0.80\beta_0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+You may spend at most five action points. If two cards modify the same parameter, use the stronger effect rather than stacking them.
+
+\subsection*{Scoring}
+
+A good strategy should:
+\begin{itemize}
+    \item keep $H(t)$ below $600$ if possible;
+    \item reduce the number of days over capacity;
+    \item reduce cumulative infections $C(180)$;
+    \item avoid relying on a numerically unstable time step.
+\end{itemize}
+
+\questionblock{%
+\begin{enumerate}
+    \item Which combination of cards gives the lowest peak hospital load?
+    \item Which combination gives the lowest cumulative infections?
+    \item Are these the same strategy?
+    \item Does an early temporary reduction in $\beta_0$ merely delay the peak, or does it reduce it?
+    \item Can two moderate interventions combine into a surprisingly strong result?
+\end{enumerate}
+}
+
+
+
+\mission{7}{The hidden outbreak parameters}
+
+\briefing{The first forecasts were based on assumed parameters. Now surveillance teams send imperfect weekly estimates of the infectious population. The council asks a harder question: what transmission parameters best explain the data?}
+
+Assume all baseline parameters are known except $\beta_0$ and $\kappa$. You receive the following weekly observations:
+
+\begin{center}
+\begin{tabular}{rrrrrrrr}
+\toprule
+Day & 7 & 14 & 21 & 28 & 35 & 42 & 49 \\
+\midrule
+Observed $I$ & 110 & 440 & 1980 & 4400 & 7440 & 8250 & 7370 \\
+\midrule
+Day & 56 & 63 & 70 & 77 & 84 & 91 & \\
+\midrule
+Observed $I$ & 7230 & 5380 & 4680 & 3250 & 2990 & 2400 & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The observations are noisy. Do not expect a perfect match.
+
+\subsection*{Parameter search}
+
+Try a grid such as
+\[
+    0.60\leq \beta_0\leq 0.95,
+    \qquad
+    5\leq \kappa\leq 45.
+\]
+
+For each pair $(\beta_0,\kappa)$, simulate the model and compare the simulated infectious values to the observations. One useful loss is
+\[
+    L(\beta_0,\kappa)=
+    \frac1m\sum_{j=1}^m
+    \left[
+    \log(1+I_{\mathrm{model}}(t_j))
+    -
+    \log(1+I_{\mathrm{obs}}(t_j))
+    \right]^2.
+\]
+
+The logarithm prevents the largest observations from completely dominating the fit.
+
+\subsection*{Tasks}
+
+\begin{enumerate}
+    \item Find the pair $(\beta_0,\kappa)$ with the smallest loss.
+    \item Plot the observed data and the best-fitting simulated curve.
+    \item Plot $L(\beta_0,\kappa)$.
+    \item Find several parameter pairs that fit almost as well as the best one.
+\end{enumerate}
+
+\questionblock{%
+\begin{enumerate}
+    \item Is there one sharp best parameter pair, or a valley of nearly good pairs?
+    \item Can a larger $\beta_0$ be partially compensated by a larger $\kappa$?
+    \item If you only had the first five weeks of data, would your estimate change?
+    \item How would wrong parameters affect the intervention chosen in Mission 6?
+\end{enumerate}
+}
+
+
+
+\mission{8}{Final mission: robust decisions under uncertainty}
+
+\briefing{The council is no longer satisfied with a single forecast. A single best-fit parameter set may be a trap. Several parameter pairs can explain the data almost equally well, but they may predict different futures. Numeria needs a policy that survives uncertainty.}
+
+Use the parameter search from Mission 7. Let
+\[
+    L_{\min}=\min_{\beta_0,\kappa}L(\beta_0,\kappa).
+\]
+Build a small uncertainty set, for example
+\[
+    \mathcal{P}=\left\{(\beta_0,\kappa):
+    L(\beta_0,\kappa)\leq L_{\min}+0.02
+    \right\}.
+\]
+
+If this set is too large, keep a representative sample of parameter pairs: some with low $\beta_0$, some with high $\beta_0$, some with low $\kappa$, and some with high $\kappa$.
+
+Now return to the intervention cards. For each possible policy, simulate every parameter pair in $\mathcal{P}$.
+
+Define the worst-case hospital load
+\[
+    H_{\mathrm{worst}}=\max_{(\beta_0,\kappa)\in\mathcal{P}}\max_{0\leq t\leq 180}H(t),
+\]
+and the worst-case days over capacity
+\[
+    D_{\mathrm{worst}}=\max_{(\beta_0,\kappa)\in\mathcal{P}}D_{\mathrm{over}}.
+\]
+
+\subsection*{Tasks}
+
+\begin{enumerate}
+    \item Choose a policy with at most five action points.
+    \item Evaluate it over all parameter pairs in $\mathcal{P}$.
+    \item Compare it with the policy that looked best using only the single best-fit parameter pair.
+    \item Decide whether the city should optimize for the average case or the worst case.
+\end{enumerate}
+
+\questionblock{%
+\begin{enumerate}
+    \item Which policy is best in the worst case?
+    \item Is it the same as the policy chosen from the baseline model?
+    \item What does this tell you about forecasting under uncertainty?
+    \item If the city could buy one extra action point, which intervention would become attractive?
+    \item What additional data would most reduce the uncertainty: more infection reports, hospital reports, vaccination data, contact surveys, or isolation compliance data?
+\end{enumerate}
+}
+
+\end{document}
