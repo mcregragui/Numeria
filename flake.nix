@@ -80,7 +80,25 @@
           packages = [
             (texEnvFor pkgs)
             (pythonFor pkgs)
+            # Julia for the Pluto notebook in julia/. Pluto and the notebook's
+            # package dependencies are installed via Julia's own package
+            # manager on first launch. Start it with `julia julia/run_pluto.jl`
+            # (or `nix run .#pluto`).
+            pkgs.julia-bin
           ];
+        };
+      });
+
+      apps = forAllSystems (pkgs: {
+        pluto = {
+          type = "app";
+          # Launches Pluto on julia/Meetup_Numeria.jl. Run from the repo root so
+          # run_pluto.jl finds the working-copy notebook (it is not in the store).
+          program = toString (
+            pkgs.writeShellScript "numeria-pluto" ''
+              exec ${pkgs.julia-bin}/bin/julia ${./julia/run_pluto.jl} "$@"
+            ''
+          );
         };
       });
     };
